@@ -1,0 +1,244 @@
+<!-- Ritbik Bharti -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>HAR File Comparator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+      background-color: white;
+      color: black;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    body.dark {
+      background-color: #121212;
+      color: #e0e0e0;
+    }
+    #darkToggleBtn {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      padding: 8px 12px;
+    }
+    button, input[type="text"] {
+      margin: 0.5rem;
+      padding: 8px 12px;
+    }
+    label {
+      display: inline-block;
+      margin: 0.5rem 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background: #f4f4f4;
+    }
+    body.dark th {
+      background: #1e1e1e;
+    }
+    .diff {
+      background: #ffdddd;
+      color: black !important;
+    }
+    .missing {
+      background: #ffeeba;
+      color: black !important;
+    }
+    .warning {
+      color: red;
+      font-weight: bold;
+      margin: 1rem 0;
+    }
+  </style>
+</head>
+<body>
+
+<button id="darkToggleBtn" onclick="toggleDarkMode()">🌗 Toggle Dark Mode</button>
+
+<h2>HAR File Comparator</h2>
+
+<div>
+  <button onclick="document.getElementById('workingHar').click()">Select Working HAR</button>
+  <span id="workingFileName"></span>
+  <input type="file" id="workingHar" accept=".har" style="display:none">
+</div>
+
+<div>
+  <button onclick="document.getElementById('nonWorkingHar').click()">Select Non-Working HAR</button>
+  <span id="nonWorkingFileName"></span>
+  <input type="file" id="nonWorkingHar" accept=".har" style="display:none">
+</div>
+
+<div>
+  <label><input type="checkbox" id="filterDiffStatus"> Show only status differences</label>
+  <label>Hostname filter: <input type="text" id="hostnameFilter" placeholder="example.com"></label>
+  <button onclick="compareHARs()">Compare</button>
+  <button onclick="exportCSV()">Export CSV</button>
+</div>
+
+<div id="warning" class="warning"></div>
+<div id="results"></div>
+
+<script>
+  let workingRaw = "", nonWorkingRaw = "";
+  let lastComparison = [];
+
+  function toggleDarkMode() {
+    document.body.classList.toggle('dark');
+    localStorage.setItem('har-dark-mode', document.body.classList.contains('dark') ? 'true' : 'false');
+  }
+
+  function loadDarkMode() {
+    if (localStorage.getItem('har-dark-mode') === 'true') {
+      document.body.classList.add('dark');
+    }
+  }
+
+  loadDarkMode();
+
+  function readHAR(file, callback, isWorking = false) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const text = e.target.result;
+        const json = JSON.parse(text);
+        const entries = json.log.entries.map(entry => ({
+          url: entry.request.url,
+          status: entry.response.status,
+          size: entry.response.content.size
+        }));
+        if (isWorking) workingRaw = text;
+        else nonWorkingRaw = text;
+        callback(entries);
+      } catch (err) {
+        alert("Invalid HAR file: " + file.name);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  document.getElementById('workingHar').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) {
+      document.getElementById('workingFileName').textContent = file.name;
+    }
+  });
+
+  document.getElementById('nonWorkingHar').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) {
+      document.getElementById('nonWorkingFileName').textContent = file.name;
+    }
+  });
+
+  function compareHARs() {
+    const file1 = document.getElementById('workingHar').files[0];
+    const file2 = document.getElementById('nonWorkingHar').files[0];
+    const warningEl = document.getElementById('warning');
+    warningEl.textContent = '';
+
+    if (!file1 || !file2) {
+      alert("Please select both HAR files.");
+      return;
+    }
+
+    readHAR(file1, data1 => {
+      readHAR(file2, data2 => {
+        if (workingRaw === nonWorkingRaw) {
+          warningEl.textContent = "⚠️ Both HAR files are identical. Please choose different files.";
+          document.getElementById('results').innerHTML = "";
+          return;
+        }
+        showComparison(data1, data2);
+      }, false);
+    }, true);
+  }
+
+  function getHostname(url) {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return '';
+    }
+  }
+
+  function showComparison(working, nonWorking) {
+    const mapW = Object.fromEntries(working.map(e => [e.url, e]));
+    const mapN = Object.fromEntries(nonWorking.map(e => [e.url, e]));
+    const allUrls = new Set([...Object.keys(mapW), ...Object.keys(mapN)]);
+
+    const hostnameFilter = document.getElementById('hostnameFilter').value.trim();
+    const filterDiffStatus = document.getElementById('filterDiffStatus').checked;
+
+    lastComparison = []; // reset CSV data
+
+    let html = '<table><tr><th>URL</th><th>Status (Working)</th><th>Status (Non-Working)</th><th>Size (Working)</th><th>Size (Non-Working)</th></tr>';
+
+    allUrls.forEach(url => {
+      const hostname = getHostname(url);
+      if (hostnameFilter && !hostname.includes(hostnameFilter)) return;
+
+      const w = mapW[url];
+      const n = mapN[url];
+
+      const statusDiff = w?.status !== n?.status;
+      const sizeDiff = w?.size !== n?.size;
+      const rowClass = !w || !n ? 'missing' : (statusDiff || sizeDiff ? 'diff' : '');
+
+      if (filterDiffStatus && !statusDiff) return;
+
+      html += `<tr class="${rowClass}">
+        <td>${url}</td>
+        <td>${w?.status ?? '-'}</td>
+        <td>${n?.status ?? '-'}</td>
+        <td>${w?.size ?? '-'}</td>
+        <td>${n?.size ?? '-'}</td>
+      </tr>`;
+
+      lastComparison.push([
+        url,
+        w?.status ?? '-',
+        n?.status ?? '-',
+        w?.size ?? '-',
+        n?.size ?? '-'
+      ]);
+    });
+
+    html += '</table>';
+    document.getElementById('results').innerHTML = html;
+  }
+
+  function exportCSV() {
+    if (!lastComparison.length) {
+      alert("No comparison to export.");
+      return;
+    }
+
+    const header = ["URL", "Status (Working)", "Status (Non-Working)", "Size (Working)", "Size (Non-Working)"];
+    const rows = [header, ...lastComparison];
+    const csvContent = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'har_comparison.csv';
+    a.click();
+
+    URL.revokeObjectURL(url);
+  }
+</script>
+
+</body>
+</html>
