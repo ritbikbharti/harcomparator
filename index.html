@@ -15,8 +15,8 @@
     }
 
     body.dark {
-      --background: #121212;
-      --surface: #1e1e1e;
+      --background: #000000;
+      --surface: #000000;
       --on-surface: #e0e0e0;
     }
 
@@ -180,7 +180,7 @@
 <button id="darkToggleBtn" onclick="toggleDarkMode()">🌗 Toggle Dark Mode</button>
 
 <div class="container">
-  <h2>HAR File Comparator</h2>
+  <h2><b>HAR File Comparator</b></h2>
 
   <div class="flex-row">
     <button onclick="document.getElementById('workingHar').click()">Select Working HAR</button>
@@ -197,8 +197,8 @@
   <div class="flex-row">
     <label>Hostname filter: <input type="text" id="hostnameFilter" placeholder="example.com"></label>
     <label>Search URL: <input type="text" id="searchInput" oninput="filterTable()" placeholder="Type to filter..."></label>
-    <label><input type="checkbox" id="filterDiffStatus"> Show only requests with status code differences</label>
-    <label><input type="checkbox" id="filterMatching"> Show only matching requests</label>
+    <label><input type="checkbox" id="filterDiffStatus"> Show only requests with differences</label>
+    <label><input type="checkbox" id="filterMatching"> Show only requests available in both files</label>
   </div>
 
   <div class="flex-row">
@@ -233,11 +233,16 @@
       try {
         const text = e.target.result;
         const json = JSON.parse(text);
-        const entries = json.log.entries.map(entry => ({
-          url: entry.request.url,
-          status: entry.response.status,
-          size: entry.response.content.size
-        }));
+        const entries = json.log.entries.map(entry => {
+          const headers = Object.fromEntries(entry.response.headers.map(h => [h.name.toLowerCase(), h.value]));
+          return {
+            url: entry.request.url,
+            status: entry.response.status,
+            size: entry.response.content.size,
+            contentLength: headers['content-length'] || '-',
+            lastModified: headers['last-modified'] || '-'
+          };
+        });
         if (isWorking) workingRaw = text;
         else nonWorkingRaw = text;
         callback(entries);
@@ -330,6 +335,10 @@
           <td>${n?.status ?? '-'}</td>
           <td>${w?.size ?? '-'}</td>
           <td>${n?.size ?? '-'}</td>
+          <td>${w?.contentLength ?? '-'}</td>
+          <td>${n?.contentLength ?? '-'}</td>
+          <td>${w?.lastModified ?? '-'}</td>
+          <td>${n?.lastModified ?? '-'}</td>
         </tr>`,
         sortIndex: category === 'diff' ? 0 : category === 'match' ? 1 : 2
       });
@@ -339,14 +348,18 @@
         w?.status ?? '-',
         n?.status ?? '-',
         w?.size ?? '-',
-        n?.size ?? '-'
+        n?.size ?? '-',
+        w?.contentLength ?? '-',
+        n?.contentLength ?? '-',
+        w?.lastModified ?? '-',
+        n?.lastModified ?? '-'
       ]);
     });
 
     rows.sort((a, b) => a.sortIndex - b.sortIndex);
 
     let html = '<div class="table-container"><table id="comparisonTable">';
-    html += '<thead><tr><th>URL</th><th>Status (Working)</th><th>Status (Non-Working)</th><th>Size (Working)</th><th>Size (Non-Working)</th></tr></thead><tbody>';
+    html += '<thead><tr><th>URL</th><th>Status (Working)</th><th>Status (Non-Working)</th><th>Size (Working)</th><th>Size (Non-Working)</th><th>Content-Length (Working)</th><th>Content-Length (Non-Working)</th><th>Last-Modified (Working)</th><th>Last-Modified (Non-Working)</th></tr></thead><tbody>';
     html += rows.map(row => row.html).join('');
     html += '</tbody></table></div>';
 
@@ -359,7 +372,7 @@
       return;
     }
 
-    const header = ["URL", "Status (Working)", "Status (Non-Working)", "Size (Working)", "Size (Non-Working)"];
+    const header = ["URL", "Status (Working)", "Status (Non-Working)", "Size (Working)", "Size (Non-Working)", "Content-Length (Working)", "Content-Length (Non-Working)", "Last-Modified (Working)", "Last-Modified (Non-Working)"];
     const rows = [header, ...lastComparison];
     const csvContent = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
 
